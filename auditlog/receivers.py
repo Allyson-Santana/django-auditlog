@@ -1,3 +1,4 @@
+import threading
 from functools import wraps
 
 from django.conf import settings
@@ -6,6 +7,29 @@ from auditlog.context import auditlog_disabled
 from auditlog.diff import model_instance_diff
 from auditlog.models import LogEntry
 from auditlog.signals import post_log, pre_log
+from typing import List
+
+_local = threading.local()
+
+
+def get_audit_log_entries() -> List[LogEntry]:
+    if not hasattr(_local, 'audit_log_entries'):
+        _local.audit_log_entries = []
+    return _local.audit_log_entries
+
+
+def clear_audit_log_entries() -> None:
+    if hasattr(_local, 'audit_log_entries'):
+        _local.audit_log_entries = []
+
+def register_log_entry(log_entry_list: List[LogEntry]):
+    audit_log_entries = get_audit_log_entries()
+    audit_log_entries.extend(log_entry_list)
+
+
+def save_all_log_entries_registered():
+    log_entries = get_audit_log_entries()
+    LogEntry.objects.bulk_create(log_entries)
 
 
 def check_disable(signal_handler):
@@ -121,7 +145,7 @@ def _create_log_entry(
         )
 
         if force_log or changes:
-            log_entry = LogEntry.objects.log_create(
+            log_entry = LogEntry.objects.create_instance(
                 instance,
                 action=action,
                 changes=changes,
@@ -144,7 +168,9 @@ def _create_log_entry(
             )
         if error:
             raise error
-
+    
+    if log_entry:
+        register_log_entry([log_entry])
 
 def make_log_m2m_changes(field_name):
     """Return a handler for m2m_changed with field_name enclosed."""
@@ -162,19 +188,24 @@ def make_log_m2m_changes(field_name):
                 pk__in=kwargs["pk_set"]
             )
 
+        log_entry = None
+
         if action in ["post_add"]:
-            LogEntry.objects.log_m2m_changes(
+            log_entry = LogEntry.objects.log_m2m_changes(
                 changed_queryset,
                 kwargs["instance"],
                 "add",
                 field_name,
             )
         elif action in ["post_remove", "post_clear"]:
-            LogEntry.objects.log_m2m_changes(
+            log_entry = LogEntry.objects.log_m2m_changes(
                 changed_queryset,
                 kwargs["instance"],
                 "delete",
                 field_name,
             )
+
+        if log_entry:
+            register_log_entry([log_entry])
 
     return log_m2m_changes
