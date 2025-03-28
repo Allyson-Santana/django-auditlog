@@ -1,4 +1,3 @@
-import threading
 from functools import wraps
 
 from django.conf import settings
@@ -8,28 +7,21 @@ from auditlog.diff import model_instance_diff
 from auditlog.models import LogEntry
 from auditlog.signals import post_log, pre_log
 from typing import List
-
-_local = threading.local()
-
-
-def get_audit_log_entries() -> List[LogEntry]:
-    if not hasattr(_local, 'audit_log_entries'):
-        _local.audit_log_entries = []
-    return _local.audit_log_entries
+from auditlog.threadlocal import register_log_entry, get_audit_log_entries, clear_audit_log_entries
+from auditlog.logging import setup_logger
 
 
-def clear_audit_log_entries() -> None:
-    if hasattr(_local, 'audit_log_entries'):
-        _local.audit_log_entries = []
-
-def register_log_entry(log_entry_list: List[LogEntry]):
-    audit_log_entries = get_audit_log_entries()
-    audit_log_entries.extend(log_entry_list)
+logger = setup_logger()
 
 
-def save_all_log_entries_registered():
-    log_entries = get_audit_log_entries()
-    LogEntry.objects.bulk_create(log_entries)
+def save_log_entries_registered():
+    try:
+        log_entries = get_audit_log_entries()
+        LogEntry.objects.bulk_create(log_entries)
+    except Exception as exception:
+        logger.exception(f"Save entries registered - Entries: {[entry.__dict__ for entry in log_entries]} - Error: {exception}")
+    finally:
+        clear_audit_log_entries()
 
 
 def check_disable(signal_handler):
@@ -45,9 +37,7 @@ def check_disable(signal_handler):
             auditlog_disabled_value = auditlog_disabled.get()
         except LookupError:
             auditlog_disabled_value = False
-        if not auditlog_disabled_value and not (
-            kwargs.get("raw") and settings.AUDITLOG_DISABLE_ON_RAW_SAVE
-        ):
+        if not auditlog_disabled_value and not (kwargs.get("raw") and settings.AUDITLOG_DISABLE_ON_RAW_SAVE):
             signal_handler(*args, **kwargs)
 
     return wrapper
@@ -124,9 +114,7 @@ def log_access(sender, instance, **kwargs):
         )
 
 
-def _create_log_entry(
-    action, instance, sender, diff_old, diff_new, fields_to_check=None, force_log=False
-):
+def _create_log_entry(action, instance, sender, diff_old, diff_new, fields_to_check=None, force_log=False):
     pre_log_results = pre_log.send(
         sender,
         instance=instance,
@@ -140,9 +128,7 @@ def _create_log_entry(
     log_entry = None
     changes = None
     try:
-        changes = model_instance_diff(
-            diff_old, diff_new, fields_to_check=fields_to_check
-        )
+        changes = model_instance_diff(diff_old, diff_new, fields_to_check=fields_to_check)
 
         if force_log or changes:
             log_entry = LogEntry.objects.create_instance(
@@ -168,9 +154,10 @@ def _create_log_entry(
             )
         if error:
             raise error
-    
+
     if log_entry:
         register_log_entry([log_entry])
+
 
 def make_log_m2m_changes(field_name):
     """Return a handler for m2m_changed with field_name enclosed."""
@@ -184,21 +171,19 @@ def make_log_m2m_changes(field_name):
         if action == "post_clear":
             changed_queryset = kwargs["model"]._default_manager.all()
         else:
-            changed_queryset = kwargs["model"]._default_manager.filter(
-                pk__in=kwargs["pk_set"]
-            )
+            changed_queryset = kwargs["model"]._default_manager.filter(pk__in=kwargs["pk_set"])
 
         log_entry = None
 
         if action in ["post_add"]:
-            log_entry = LogEntry.objects.log_m2m_changes(
+            log_entry = LogEntry.objects.create_instance_log_m2m_changes(
                 changed_queryset,
                 kwargs["instance"],
                 "add",
                 field_name,
             )
         elif action in ["post_remove", "post_clear"]:
-            log_entry = LogEntry.objects.log_m2m_changes(
+            log_entry = LogEntry.objects.create_instance_log_m2m_changes(
                 changed_queryset,
                 kwargs["instance"],
                 "delete",

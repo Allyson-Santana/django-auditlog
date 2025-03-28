@@ -77,7 +77,7 @@ class LogEntryManager(models.Manager):
             return LogEntry(**kwargs)
         return None
 
-    def log_m2m_changes(
+    def create_instance_log_m2m_changes(
         self, changed_queryset, instance, operation, field_name, **kwargs
     ):
         """Create a new "changed" log entry from m2m record.

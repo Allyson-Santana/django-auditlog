@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 
 from auditlog.cid import set_cid
 from auditlog.context import set_actor
-from auditlog.receivers import save_all_log_entries_registered, clear_audit_log_entries
+from auditlog.receivers import save_log_entries_registered
 
 
 class AuditlogMiddleware:
@@ -57,14 +57,6 @@ class AuditlogMiddleware:
             return user
         return None
 
-    def _process_log_entries(self):
-        try:
-            save_all_log_entries_registered()
-        except Exception:
-            pass
-        finally:
-            clear_audit_log_entries()
-
     def __call__(self, request):
         remote_addr = self._get_remote_addr(request)
         remote_port = self._get_remote_port(request)
@@ -75,6 +67,6 @@ class AuditlogMiddleware:
         with set_actor(actor=user, remote_addr=remote_addr, remote_port=remote_port):
             response = self.get_response(request)
 
-        self._process_log_entries()
+        save_log_entries_registered()
 
         return response

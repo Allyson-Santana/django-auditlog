@@ -208,7 +208,7 @@ class SimpleModelTest(TestCase):
 
         changes = model_instance_diff(None, instance)
 
-        log_entry = LogEntry.objects.log_create(
+        log_entry = LogEntry.objects.create_instance(
             instance,
             action=LogEntry.Action.CREATE,
             changes=json.dumps(changes),
@@ -226,7 +226,7 @@ class SimpleModelTest(TestCase):
 
     def test_manual_timestamp(self):
         timestamp = datetime.datetime(1999, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
-        LogEntry.objects.log_create(
+        LogEntry.objects.create_instance(
             instance=self.obj,
             timestamp=timestamp,
             changes="foo bar",
@@ -1210,7 +1210,7 @@ class UnregisterTest(TestCase):
         obj = self.obj
         obj.boolean = True
         obj.save()
-        LogEntry.objects.log_create(
+        LogEntry.objects.create_instance(
             instance=obj,
             action=LogEntry.Action.UPDATE,
             changes="",
@@ -1774,7 +1774,7 @@ class DiffMsgTest(TestCase):
         self.admin = LogEntryAdmin(LogEntry, self.site)
 
     def _create_log_entry(self, action, changes):
-        return LogEntry.objects.log_create(
+        return LogEntry.objects.create_instance(
             SimpleModel.objects.create(),  # doesn't affect anything
             action=action,
             changes=changes,
