@@ -9,7 +9,8 @@ from auditlog.signals import post_log, pre_log
 from typing import List
 from auditlog.threadlocal import register_log_entry, get_audit_log_entries, clear_audit_log_entries
 from auditlog.logging import setup_logger
-
+from django.db import models
+from copy import deepcopy
 
 logger = setup_logger()
 
@@ -19,7 +20,9 @@ def save_log_entries_registered():
         log_entries = get_audit_log_entries()
         LogEntry.objects.bulk_create(log_entries)
     except Exception as exception:
-        logger.exception(f"Save entries registered - Entries: {[entry.__dict__ for entry in log_entries]} - Error: {exception}")
+        logger.exception(
+            f"Save entries registered - Entries: {[entry.__dict__ for entry in log_entries]} - Error: {exception}"
+        )
     finally:
         clear_audit_log_entries()
 
@@ -41,6 +44,66 @@ def check_disable(signal_handler):
             signal_handler(*args, **kwargs)
 
     return wrapper
+
+
+#####################################################
+
+
+@check_disable
+def log_bulk_create(*args, **kwargs):
+    for instance in kwargs['objects']:
+        _create_log_entry(
+            action=LogEntry.Action.CREATE,
+            instance=instance,
+            sender=kwargs['sender'],
+            diff_old=None,
+            diff_new=instance,
+        )
+
+@check_disable
+def log_bulk_update(*args, **kwargs):
+    sender: models.Model = kwargs['sender']
+    objects: models.Model = kwargs['objects']
+
+    original_instances = {obj.pk: obj for obj in sender.objects.filter(pk__in=[obj.pk for obj in objects])}
+
+    for new_instance in objects:
+        instance = original_instances.get(new_instance.pk)
+
+        if instance is None:
+            logger.warning(f'Record not found or not access permission: Instance: {new_instance.__dict__}.')
+            continue
+
+        _create_log_entry(
+            action=LogEntry.Action.UPDATE,
+            instance=instance,
+            sender=sender,
+            diff_old=instance,
+            diff_new=new_instance,
+            fields_to_check=kwargs['fields'],
+        )
+
+@check_disable
+def log_query_update(*args, **kwargs):
+    for instance in kwargs['queryset']:
+        new_instance = deepcopy(instance)
+        update_fields = []
+
+        for field, new_value in kwargs['update_kwargs'].items():
+            setattr(new_instance, field, new_value)
+            update_fields.append(field)
+
+        _create_log_entry(
+            action=LogEntry.Action.UPDATE,
+            instance=instance,
+            sender=kwargs['sender'],
+            diff_old=instance,
+            diff_new=new_instance,
+            fields_to_check=update_fields,
+        )
+
+
+#####################################################
 
 
 @check_disable
