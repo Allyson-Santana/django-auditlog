@@ -33,7 +33,7 @@ class LogEntryManager(models.Manager):
     Custom manager for the :py:class:`LogEntry` model.
     """
 
-    def log_create(self, instance, force_log: bool = False, **kwargs):
+    def create_instance(self, instance, force_log: bool = False, **kwargs):
         """
         Helper method to create a new log entry. This method automatically populates some fields when no
         explicit value is given.
@@ -74,10 +74,10 @@ class LogEntryManager(models.Manager):
 
             # set correlation id
             kwargs.setdefault("cid", get_cid())
-            return self.create(**kwargs)
+            return LogEntry(**kwargs)
         return None
 
-    def log_m2m_changes(
+    def create_instance_log_m2m_changes(
         self, changed_queryset, instance, operation, field_name, **kwargs
     ):
         """Create a new "changed" log entry from m2m record.
@@ -126,7 +126,7 @@ class LogEntryManager(models.Manager):
             }
 
             kwargs.setdefault("cid", get_cid())
-            return self.create(**kwargs)
+            return LogEntry(**kwargs)
 
         return None
 

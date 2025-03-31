@@ -31,6 +31,12 @@ def set_actor(actor, remote_addr=None):
         weak=False,
     )
 
+    # TODO: Get USER and IP to bulk operation
+    
+    # pre_bulk_create
+    # pre_bulk_update
+    # pre_query_update
+
     try:
         yield
     finally:

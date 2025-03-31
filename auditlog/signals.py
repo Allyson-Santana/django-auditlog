@@ -68,3 +68,14 @@ Keyword arguments sent with this signal:
     non-null, but ``pre_log_response`` may be ``None``. This depends on the corresponding
     ``pre_log_receiver``'s return value.
 """
+
+
+
+pre_bulk_log = django.dispatch.Signal()
+
+# TODO: Explain signals...
+
+post_bulk_log = django.dispatch.Signal()
+
+# TODO: Explain signals...
+
