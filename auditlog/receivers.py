@@ -46,9 +46,6 @@ def check_disable(signal_handler):
     return wrapper
 
 
-#####################################################
-
-
 @check_disable
 def log_bulk_create(*args, **kwargs):
     for instance in kwargs['objects']:
@@ -60,12 +57,13 @@ def log_bulk_create(*args, **kwargs):
             diff_new=instance,
         )
 
+
 @check_disable
 def log_bulk_update(*args, **kwargs):
     sender: models.Model = kwargs['sender']
     objects: models.Model = kwargs['objects']
 
-    original_instances = {obj.pk: obj for obj in sender.objects.filter(pk__in=[obj.pk for obj in objects])}
+    original_instances = {obj.pk: obj for obj in sender._default_manager.filter(pk__in=[obj.pk for obj in objects])}
 
     for new_instance in objects:
         instance = original_instances.get(new_instance.pk)
@@ -82,6 +80,7 @@ def log_bulk_update(*args, **kwargs):
             diff_new=new_instance,
             fields_to_check=kwargs['fields'],
         )
+
 
 @check_disable
 def log_query_update(*args, **kwargs):
@@ -101,9 +100,6 @@ def log_query_update(*args, **kwargs):
             diff_new=new_instance,
             fields_to_check=update_fields,
         )
-
-
-#####################################################
 
 
 @check_disable
