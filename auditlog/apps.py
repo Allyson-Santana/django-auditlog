@@ -10,7 +10,7 @@ from auditlog.signals_bulk_operation import (
     post_query_update,
 )
 from django.db import transaction
-from registry import auditlog
+from auditlog.registry import auditlog
 
 
 class AuditlogConfig(AppConfig):
