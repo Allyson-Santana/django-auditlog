@@ -1,9 +1,11 @@
 from threading import local
 from typing import List
 from .models import LogEntry
+from django.conf import settings
+
 
 _audit_log_thread_locals = local()
-_audit_log_key = 'audit_log_entries'
+_audit_log_key = getattr(settings, "AUDIT_LOG_THREAD_LOCAL_KEY", "audit_log_entries")
 
 
 def get_audit_log_entries() -> List[LogEntry]:

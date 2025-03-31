@@ -5,7 +5,7 @@ from django.conf import settings
 from auditlog.context import auditlog_disabled
 from auditlog.diff import model_instance_diff
 from auditlog.models import LogEntry
-from auditlog.signals import post_log, pre_log
+from auditlog.signals import post_log, pre_log, pre_bulk_log, post_bulk_log
 from typing import List
 from auditlog.threadlocal import register_log_entry, get_audit_log_entries, clear_audit_log_entries
 from auditlog.logging import setup_logger
@@ -48,22 +48,41 @@ def check_disable(signal_handler):
 
 @check_disable
 def log_bulk_create(*args, **kwargs):
-    for instance in kwargs['objects']:
-        _create_log_entry(
+    sender: models.Model = kwargs['sender']
+    objects: models.Model = kwargs['objects']
+
+    pre_bulk_log.send(sender=sender, objects=objects, created=True)
+
+    log_entries = []
+
+    for instance in objects:
+        log_entry = _create_instance_log_entry(
             action=LogEntry.Action.CREATE,
             instance=instance,
-            sender=kwargs['sender'],
+            sender=sender,
             diff_old=None,
             diff_new=instance,
         )
+
+        if log_entry is not None:
+            log_entries.append(log_entry)
+
+    register_log_entry(log_entries)
+
+    post_bulk_log.send(sender=sender, objects=objects, created=True)
 
 
 @check_disable
 def log_bulk_update(*args, **kwargs):
     sender: models.Model = kwargs['sender']
     objects: models.Model = kwargs['objects']
+    fields = kwargs['fields']
 
     original_instances = {obj.pk: obj for obj in sender._default_manager.filter(pk__in=[obj.pk for obj in objects])}
+
+    pre_bulk_log.send(sender=sender, objects=original_instances, new_objects=objects, fields=fields, created=False)
+
+    log_entries = []
 
     for new_instance in objects:
         instance = original_instances.get(new_instance.pk)
@@ -72,27 +91,42 @@ def log_bulk_update(*args, **kwargs):
             logger.warning(f'Record not found or not access permission: Instance: {new_instance.__dict__}.')
             continue
 
-        _create_log_entry(
+        log_entry = _create_instance_log_entry(
             action=LogEntry.Action.UPDATE,
             instance=instance,
             sender=sender,
             diff_old=instance,
             diff_new=new_instance,
-            fields_to_check=kwargs['fields'],
+            fields_to_check=fields,
         )
+
+        if log_entry is not None:
+            log_entries.append(log_entry)
+
+    register_log_entry(log_entries)
+
+    post_bulk_log.send(sender=sender, objects=original_instances, new_objects=objects, fields=fields, created=False)
 
 
 @check_disable
 def log_query_update(*args, **kwargs):
-    for instance in kwargs['queryset']:
+    sender = kwargs['sender']
+    queryset = kwargs['queryset']
+    update_kwargs = kwargs['update_kwargs']
+
+    pre_bulk_log.send(sender=sender, queryset=queryset, update_kwargs=update_kwargs, created=False)
+
+    log_entries = []
+
+    for instance in queryset:
         new_instance = deepcopy(instance)
         update_fields = []
 
-        for field, new_value in kwargs['update_kwargs'].items():
+        for field, new_value in update_kwargs.items():
             setattr(new_instance, field, new_value)
             update_fields.append(field)
 
-        _create_log_entry(
+        log_entry = _create_instance_log_entry(
             action=LogEntry.Action.UPDATE,
             instance=instance,
             sender=kwargs['sender'],
@@ -100,6 +134,13 @@ def log_query_update(*args, **kwargs):
             diff_new=new_instance,
             fields_to_check=update_fields,
         )
+
+        if log_entry is not None:
+            log_entries.append(log_entry)
+
+    register_log_entry(log_entries)
+
+    post_bulk_log.send(sender=sender, queryset=queryset, update_kwargs=update_kwargs, created=False)
 
 
 @check_disable
@@ -110,13 +151,16 @@ def log_create(sender, instance, created, **kwargs):
     Direct use is discouraged, connect your model through :py:func:`auditlog.registry.register` instead.
     """
     if created:
-        _create_log_entry(
+        log_entry = _create_instance_log_entry(
             action=LogEntry.Action.CREATE,
             instance=instance,
             sender=sender,
             diff_old=None,
             diff_new=instance,
         )
+
+        if log_entry is not None:
+            register_log_entry([log_entry])
 
 
 @check_disable
@@ -129,7 +173,8 @@ def log_update(sender, instance, **kwargs):
     if not instance._state.adding:
         update_fields = kwargs.get("update_fields", None)
         old = sender._default_manager.filter(pk=instance.pk).first()
-        _create_log_entry(
+
+        log_entry = _create_instance_log_entry(
             action=LogEntry.Action.UPDATE,
             instance=instance,
             sender=sender,
@@ -137,6 +182,9 @@ def log_update(sender, instance, **kwargs):
             diff_new=instance,
             fields_to_check=update_fields,
         )
+
+        if log_entry is not None:
+            register_log_entry([log_entry])
 
 
 @check_disable
@@ -147,13 +195,16 @@ def log_delete(sender, instance, **kwargs):
     Direct use is discouraged, connect your model through :py:func:`auditlog.registry.register` instead.
     """
     if instance.pk is not None:
-        _create_log_entry(
+        log_entry = _create_instance_log_entry(
             action=LogEntry.Action.DELETE,
             instance=instance,
             sender=sender,
             diff_old=instance,
             diff_new=None,
         )
+
+        if log_entry is not None:
+            register_log_entry([log_entry])
 
 
 def log_access(sender, instance, **kwargs):
@@ -163,7 +214,7 @@ def log_access(sender, instance, **kwargs):
     Direct use is discouraged, connect your model through :py:func:`auditlog.registry.register` instead.
     """
     if instance.pk is not None:
-        _create_log_entry(
+        log_entry = _create_instance_log_entry(
             action=LogEntry.Action.ACCESS,
             instance=instance,
             sender=sender,
@@ -172,8 +223,11 @@ def log_access(sender, instance, **kwargs):
             force_log=True,
         )
 
+        if log_entry is not None:
+            register_log_entry([log_entry])
 
-def _create_log_entry(action, instance, sender, diff_old, diff_new, fields_to_check=None, force_log=False):
+
+def _create_instance_log_entry(action, instance, sender, diff_old, diff_new, fields_to_check=None, force_log=False) -> LogEntry:
     pre_log_results = pre_log.send(
         sender,
         instance=instance,
@@ -186,6 +240,7 @@ def _create_log_entry(action, instance, sender, diff_old, diff_new, fields_to_ch
     error = None
     log_entry = None
     changes = None
+    
     try:
         changes = model_instance_diff(diff_old, diff_new, fields_to_check=fields_to_check)
 
@@ -214,8 +269,7 @@ def _create_log_entry(action, instance, sender, diff_old, diff_new, fields_to_ch
         if error:
             raise error
 
-    if log_entry:
-        register_log_entry([log_entry])
+    return log_entry
 
 
 def make_log_m2m_changes(field_name):
