@@ -10,6 +10,10 @@ class AuditlogConfig(AppConfig):
     verbose_name = _("Audit log")
     default_auto_field = "django.db.models.AutoField"
 
+    def _skip_model_without_audit_log_recorded(self, model_label: str):
+        from auditlog.registry import auditlog
+        return model_label not in auditlog.get_models()
+
     def ready(self):
         from auditlog.registry import auditlog
 
@@ -36,7 +40,7 @@ class AuditlogConfig(AppConfig):
         def bulk_create(queryset, objs, **kwargs):
             mode_name = queryset.model._meta.label
 
-            if self._skip_signal(kwargs) or self._skip_model_without_audit_log_recorded(mode_name):
+            if self._skip_model_without_audit_log_recorded(mode_name):
                 return base_bulk_create(queryset, objs, **kwargs)
 
             model = apps.get_model(mode_name)
@@ -56,7 +60,7 @@ class AuditlogConfig(AppConfig):
 
             mode_name = queryset.model._meta.label
 
-            if self._skip_signal(kwargs) or self._skip_model_without_audit_log_recorded(mode_name):
+            if self._skip_model_without_audit_log_recorded(mode_name):
                 return base_bulk_update(queryset, objs, fields, **kwargs)
 
             model = apps.get_model(mode_name)
@@ -75,7 +79,7 @@ class AuditlogConfig(AppConfig):
         def update(queryset, **kwargs):
             mode_name = queryset.model._meta.label
 
-            if self._skip_signal(kwargs) or self._skip_model_without_audit_log_recorded(mode_name):
+            if self._skip_model_without_audit_log_recorded(mode_name):
                 return base_update(queryset, **kwargs)
 
             model = apps.get_model(mode_name)
