@@ -29,12 +29,19 @@ def set_actor(actor, remote_addr=None, remote_port=None):
         user=actor,
         signal_duid=context_data["signal_duid"],
     )
+
     pre_save.connect(
         set_actor,
         sender=LogEntry,
         dispatch_uid=context_data["signal_duid"],
         weak=False,
     )
+
+    # TODO: Get USER and IP to bulk operation
+    
+    # pre_bulk_create
+    # pre_bulk_update
+    # pre_query_update
 
     try:
         yield
