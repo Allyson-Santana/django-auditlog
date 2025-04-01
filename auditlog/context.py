@@ -31,7 +31,8 @@ def set_actor(actor, remote_addr=None):
         weak=False,
     )
 
-    # TODO: Get USER and IP to bulk operation
+    # # TODO: Get USER and IP to bulk operation
+    # from signals_bulk_operation import pre_bulk_create, pre_bulk_update, pre_query_update
     
     # pre_bulk_create
     # pre_bulk_update

@@ -15,10 +15,17 @@ from copy import deepcopy
 logger = setup_logger()
 
 
-def save_log_entries_registered():
+def save_log_entries_registered(actor, remote_addr):
+
     try:
-        log_entries = get_audit_log_entries()
-        LogEntry.objects.bulk_create(log_entries)
+        log_entries: List[LogEntry] = get_audit_log_entries()
+
+        if len(log_entries) > 0:
+            for log_entry in log_entries:
+                log_entry.actor = actor
+                log_entry.remote_addr = remote_addr
+
+            LogEntry.objects.bulk_create(log_entries)
     except Exception as exception:
         logger.exception(
             f"Save entries registered - Entries: {[entry.__dict__ for entry in log_entries]} - Error: {exception}"

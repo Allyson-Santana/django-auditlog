@@ -52,6 +52,6 @@ class AuditlogMiddleware:
         with set_actor(actor=user, remote_addr=remote_addr):
             response = self.get_response(request)
 
-        save_log_entries_registered()
+        save_log_entries_registered(actor=user, remote_addr=remote_addr)
 
         return response

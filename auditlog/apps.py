@@ -1,6 +1,6 @@
 from django.apps import AppConfig, apps
 from django.utils.translation import gettext_lazy as _
-from django.db import transaction
+from django.db import transaction, models
 from django.db.models.query import QuerySet
 from django.conf import settings
 
@@ -10,9 +10,10 @@ class AuditlogConfig(AppConfig):
     verbose_name = _("Audit log")
     default_auto_field = "django.db.models.AutoField"
 
-    def _skip_model_without_audit_log_recorded(self, model_label: str):
+    def _skip_model_without_audit_log_recorded(self, model: models.Model):
         from auditlog.registry import auditlog
-        return model_label not in auditlog.get_models()
+
+        return model not in auditlog.get_models()
 
     def ready(self):
         from auditlog.registry import auditlog
@@ -39,11 +40,10 @@ class AuditlogConfig(AppConfig):
 
         def bulk_create(queryset, objs, **kwargs):
             mode_name = queryset.model._meta.label
-
-            if self._skip_model_without_audit_log_recorded(mode_name):
-                return base_bulk_create(queryset, objs, **kwargs)
-
             model = apps.get_model(mode_name)
+
+            if self._skip_model_without_audit_log_recorded(model):
+                return base_bulk_create(queryset, objs, **kwargs)
 
             pre_bulk_create.send(sender=model, objects=objs, **kwargs)
             created_objects = base_bulk_create(queryset, objs, **kwargs)
@@ -59,11 +59,10 @@ class AuditlogConfig(AppConfig):
             queryset._hints["is_bulk_update"] = True
 
             mode_name = queryset.model._meta.label
-
-            if self._skip_model_without_audit_log_recorded(mode_name):
-                return base_bulk_update(queryset, objs, fields, **kwargs)
-
             model = apps.get_model(mode_name)
+
+            if self._skip_model_without_audit_log_recorded(model):
+                return base_bulk_update(queryset, objs, fields, **kwargs)
 
             with transaction.atomic():
                 pre_bulk_update.send(sender=model, objects=objs, fields=fields, **kwargs)
@@ -78,11 +77,10 @@ class AuditlogConfig(AppConfig):
 
         def update(queryset, **kwargs):
             mode_name = queryset.model._meta.label
-
-            if self._skip_model_without_audit_log_recorded(mode_name):
-                return base_update(queryset, **kwargs)
-
             model = apps.get_model(mode_name)
+
+            if self._skip_model_without_audit_log_recorded(model):
+                return base_update(queryset, **kwargs)
 
             if queryset._hints.get("is_bulk_update", False):
                 return base_update(queryset, **kwargs)
