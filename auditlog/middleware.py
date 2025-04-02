@@ -7,7 +7,6 @@ from auditlog.cid import set_cid
 from auditlog.context import set_actor
 from auditlog.receivers import save_log_entries_registered
 
-
 class AuditlogMiddleware:
     """
     Middleware to couple the request's user to log items. This is accomplished by currying the
@@ -67,6 +66,6 @@ class AuditlogMiddleware:
         with set_actor(actor=user, remote_addr=remote_addr, remote_port=remote_port):
             response = self.get_response(request)
 
-        save_log_entries_registered()
+        save_log_entries_registered(actor=user, remote_addr=remote_addr)
 
         return response

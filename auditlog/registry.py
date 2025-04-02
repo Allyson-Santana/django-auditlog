@@ -14,6 +14,8 @@ from django.db.models.signals import (
     pre_save,
 )
 
+from auditlog.signals_bulk_operation import post_bulk_create, pre_bulk_update, pre_query_update
+
 from auditlog.conf import settings
 from auditlog.signals import accessed
 
@@ -40,7 +42,15 @@ class AuditlogModelRegistry:
         m2m: bool = True,
         custom: Optional[dict[ModelSignal, Callable]] = None,
     ):
-        from auditlog.receivers import log_access, log_create, log_delete, log_update
+        from auditlog.receivers import (
+            log_access,
+            log_create,
+            log_delete,
+            log_update,
+            log_bulk_create,
+            log_bulk_update,
+            log_query_update,
+        )
 
         self._registry = {}
         self._signals = {}
@@ -48,12 +58,16 @@ class AuditlogModelRegistry:
 
         if create:
             self._signals[post_save] = log_create
+            self._signals[post_bulk_create] = log_bulk_create
         if update:
             self._signals[pre_save] = log_update
+            self._signals[pre_bulk_update] = log_bulk_update
+            self._signals[pre_query_update] = log_query_update
         if delete:
             self._signals[post_delete] = log_delete
         if access:
             self._signals[accessed] = log_access
+
         self._m2m = m2m
 
         if custom is not None:
