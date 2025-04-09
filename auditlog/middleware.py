@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 
 from auditlog.cid import set_cid
 from auditlog.context import set_actor
-from auditlog.receivers import save_log_entries_registered
+from auditlog.receivers import _save_log_entries_registered
 
 class AuditlogMiddleware:
     """
@@ -66,6 +66,6 @@ class AuditlogMiddleware:
         with set_actor(actor=user, remote_addr=remote_addr, remote_port=remote_port):
             response = self.get_response(request)
 
-        save_log_entries_registered(actor=user, remote_addr=remote_addr)
+        _save_log_entries_registered()
 
         return response

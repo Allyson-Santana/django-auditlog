@@ -38,11 +38,10 @@ def set_actor(actor, remote_addr=None, remote_port=None):
     )
 
     # # TODO: Get USER and IP to bulk operation
-    # from signals_bulk_operation import pre_bulk_create, pre_bulk_update, pre_query_update
+    # from signals_bulk_operation import, auditlog_pre_bulk_update, auditlog_pre_query_update
     
-    # pre_bulk_create
-    # pre_bulk_update
-    # pre_query_update
+    # auditlog_pre_bulk_update
+    # auditlog_pre_query_update
 
     try:
         yield

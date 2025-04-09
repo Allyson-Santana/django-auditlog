@@ -3,6 +3,10 @@ from django.utils.translation import gettext_lazy as _
 from django.db import transaction, models
 from django.db.models.query import QuerySet
 from django.conf import settings
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from auditlog.registry import AuditlogModelRegistry
 
 
 class AuditlogConfig(AppConfig):
@@ -10,12 +14,16 @@ class AuditlogConfig(AppConfig):
     verbose_name = _("Audit log")
     default_auto_field = "django.db.models.AutoField"
 
-    def _skip_model_without_audit_log_recorded(self, model: models.Model):
-        from auditlog.registry import auditlog
-
+    def _skip_model_without_audit_log_recorded(self, model: models.Model, auditlog: "AuditlogModelRegistry") -> bool:
         return model not in auditlog.get_models()
 
+    def _skip_bulk_signals(self, kwargs) -> bool:
+        skip_signal = bool(kwargs.pop("skip_signal", False))
+        return skip_signal or not self.signal_global_enable
+
     def ready(self):
+        self.signal_global_enable = getattr(settings, "AUDITLOG_BULK_SIGNALS_ENABLE", False)
+
         from auditlog.registry import auditlog
 
         auditlog.register_from_settings()
@@ -27,14 +35,10 @@ class AuditlogConfig(AppConfig):
         # Bulk Operation signals
 
         from auditlog.signals_bulk_operation import (
-            pre_bulk_create,
-            post_bulk_create,
-            pre_bulk_update,
-            post_bulk_update,
-            pre_query_update,
-            post_query_update,
+            auditlog_post_bulk_create,
+            auditlog_pre_bulk_update,
+            auditlog_pre_query_update,
         )
-        from auditlog.registry import auditlog
 
         base_bulk_create = QuerySet.bulk_create
 
@@ -42,12 +46,11 @@ class AuditlogConfig(AppConfig):
             mode_name = queryset.model._meta.label
             model = apps.get_model(mode_name)
 
-            if self._skip_model_without_audit_log_recorded(model):
+            if self._skip_bulk_signals(kwargs) or self._skip_model_without_audit_log_recorded(model, auditlog):
                 return base_bulk_create(queryset, objs, **kwargs)
 
-            pre_bulk_create.send(sender=model, objects=objs, **kwargs)
             created_objects = base_bulk_create(queryset, objs, **kwargs)
-            post_bulk_create.send(sender=model, objects=objs, **kwargs)
+            auditlog_post_bulk_create.send(sender=model, objects=objs, **kwargs)
 
             return created_objects
 
@@ -61,13 +64,12 @@ class AuditlogConfig(AppConfig):
             mode_name = queryset.model._meta.label
             model = apps.get_model(mode_name)
 
-            if self._skip_model_without_audit_log_recorded(model):
+            if self._skip_bulk_signals(kwargs) or self._skip_model_without_audit_log_recorded(model, auditlog):
                 return base_bulk_update(queryset, objs, fields, **kwargs)
 
             with transaction.atomic():
-                pre_bulk_update.send(sender=model, objects=objs, fields=fields, **kwargs)
+                auditlog_pre_bulk_update.send(sender=model, objects=objs, fields=fields, **kwargs)
                 return_value = base_bulk_update(queryset, objs, fields, **kwargs)
-                post_bulk_update.send(sender=model, objects=objs, fields=fields, **kwargs)
 
                 return return_value
 
@@ -79,22 +81,15 @@ class AuditlogConfig(AppConfig):
             mode_name = queryset.model._meta.label
             model = apps.get_model(mode_name)
 
-            if self._skip_model_without_audit_log_recorded(model):
+            if self._skip_bulk_signals(kwargs) or self._skip_model_without_audit_log_recorded(model, auditlog):
                 return base_update(queryset, **kwargs)
 
             if queryset._hints.get("is_bulk_update", False):
                 return base_update(queryset, **kwargs)
 
             with transaction.atomic():
-                pre_query_update.send(sender=model, queryset=queryset, update_kwargs=kwargs)
+                auditlog_pre_query_update.send(sender=model, queryset=queryset, update_kwargs=kwargs)
                 return_val = base_update(queryset, **kwargs)
-                post_query_update.send(
-                    sender=model,
-                    queryset=queryset,
-                    update_kwargs=kwargs,
-                    update_count=return_val,
-                )
-
                 return return_val
 
         QuerySet.update = update

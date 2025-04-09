@@ -14,24 +14,47 @@ from copy import deepcopy
 
 logger = setup_logger()
 
+SAVE_LOG_ENTRIES_IN_THREAD_LOCAL_ENABLE = getattr(settings, "AUDITLOG_SAVE_LOG_ENTRIES_IN_THREAD_LOCAL_ENABLE", False)
+MAX_LOG_ENTRIES_IN_THREAD_LOCAL = getattr(settings, "AUDITLOG_MAX_LOG_ENTRIES_IN_THREAD_LOCAL", 30)
 
-def save_log_entries_registered(actor, remote_addr):
+
+def _save_log_entries_registered():
+    if not SAVE_LOG_ENTRIES_IN_THREAD_LOCAL_ENABLE:
+        return
 
     try:
         log_entries: List[LogEntry] = get_audit_log_entries()
-
-        if len(log_entries) > 0:
-            for log_entry in log_entries:
-                log_entry.actor = actor
-                log_entry.remote_addr = remote_addr
-
-            LogEntry.objects.bulk_create(log_entries)
+        if log_entries:
+            LogEntry._default_manager.bulk_create(log_entries)
     except Exception as exception:
         logger.exception(
             f"Save entries registered - Entries: {[entry.__dict__ for entry in log_entries]} - Error: {exception}"
         )
     finally:
         clear_audit_log_entries()
+
+
+def _register_log_entry(log_entry_list: List[LogEntry]):
+    log_entry_list_count = len(log_entry_list)
+
+    if SAVE_LOG_ENTRIES_IN_THREAD_LOCAL_ENABLE:
+        if log_entry_list_count >= MAX_LOG_ENTRIES_IN_THREAD_LOCAL:
+            LogEntry._default_manager.bulk_create(log_entry_list)
+            return
+
+        log_entries: List[LogEntry] = get_audit_log_entries()
+        log_entries_count = len(log_entries) + log_entry_list_count
+
+        if log_entries_count >= MAX_LOG_ENTRIES_IN_THREAD_LOCAL:
+            _save_log_entries_registered()
+            return
+
+        register_log_entry(log_entries + log_entry_list)
+
+    elif log_entry_list_count == 1:
+        log_entry_list[0].save(force_insert=True)
+    else:
+        LogEntry._default_manager.bulk_create(log_entry_list)
 
 
 def check_disable(signal_handler):
@@ -74,7 +97,7 @@ def log_bulk_create(*args, **kwargs):
         if log_entry is not None:
             log_entries.append(log_entry)
 
-    register_log_entry(log_entries)
+    _register_log_entry(log_entries)
 
     post_bulk_log.send(sender=sender, objects=objects, created=True)
 
@@ -110,7 +133,7 @@ def log_bulk_update(*args, **kwargs):
         if log_entry is not None:
             log_entries.append(log_entry)
 
-    register_log_entry(log_entries)
+    _register_log_entry(log_entries)
 
     post_bulk_log.send(sender=sender, objects=original_instances, new_objects=objects, fields=fields, created=False)
 
@@ -145,7 +168,7 @@ def log_query_update(*args, **kwargs):
         if log_entry is not None:
             log_entries.append(log_entry)
 
-    register_log_entry(log_entries)
+    _register_log_entry(log_entries)
 
     post_bulk_log.send(sender=sender, queryset=queryset, update_kwargs=update_kwargs, created=False)
 
@@ -167,7 +190,7 @@ def log_create(sender, instance, created, **kwargs):
         )
 
         if log_entry is not None:
-            register_log_entry([log_entry])
+            _register_log_entry([log_entry])
 
 
 @check_disable
@@ -191,7 +214,7 @@ def log_update(sender, instance, **kwargs):
         )
 
         if log_entry is not None:
-            register_log_entry([log_entry])
+            _register_log_entry([log_entry])
 
 
 @check_disable
@@ -211,7 +234,7 @@ def log_delete(sender, instance, **kwargs):
         )
 
         if log_entry is not None:
-            register_log_entry([log_entry])
+            _register_log_entry([log_entry])
 
 
 def log_access(sender, instance, **kwargs):
@@ -231,10 +254,12 @@ def log_access(sender, instance, **kwargs):
         )
 
         if log_entry is not None:
-            register_log_entry([log_entry])
+            _register_log_entry([log_entry])
 
 
-def _create_instance_log_entry(action, instance, sender, diff_old, diff_new, fields_to_check=None, force_log=False) -> LogEntry:
+def _create_instance_log_entry(
+    action, instance, sender, diff_old, diff_new, fields_to_check=None, force_log=False
+) -> LogEntry:
     pre_log_results = pre_log.send(
         sender,
         instance=instance,
@@ -247,7 +272,7 @@ def _create_instance_log_entry(action, instance, sender, diff_old, diff_new, fie
     error = None
     log_entry = None
     changes = None
-    
+
     try:
         changes = model_instance_diff(diff_old, diff_new, fields_to_check=fields_to_check)
 
@@ -310,7 +335,7 @@ def make_log_m2m_changes(field_name):
                 field_name,
             )
 
-        if log_entry:
-            register_log_entry([log_entry])
+        if log_entry is not None:
+            _register_log_entry([log_entry])
 
     return log_m2m_changes

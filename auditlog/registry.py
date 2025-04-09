@@ -14,7 +14,7 @@ from django.db.models.signals import (
     pre_save,
 )
 
-from auditlog.signals_bulk_operation import post_bulk_create, pre_bulk_update, pre_query_update
+from auditlog.signals_bulk_operation import auditlog_post_bulk_create, auditlog_pre_bulk_update, auditlog_pre_query_update
 
 from auditlog.conf import settings
 from auditlog.signals import accessed
@@ -58,11 +58,11 @@ class AuditlogModelRegistry:
 
         if create:
             self._signals[post_save] = log_create
-            self._signals[post_bulk_create] = log_bulk_create
+            self._signals[auditlog_post_bulk_create] = log_bulk_create
         if update:
             self._signals[pre_save] = log_update
-            self._signals[pre_bulk_update] = log_bulk_update
-            self._signals[pre_query_update] = log_query_update
+            self._signals[auditlog_pre_bulk_update] = log_bulk_update
+            self._signals[auditlog_pre_query_update] = log_query_update
         if delete:
             self._signals[post_delete] = log_delete
         if access:
