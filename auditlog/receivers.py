@@ -81,8 +81,6 @@ def log_bulk_create(*args, **kwargs):
     sender: models.Model = kwargs['sender']
     objects: models.Model = kwargs['objects']
 
-    pre_bulk_log.send(sender=sender, objects=objects, created=True)
-
     log_entries = []
 
     for instance in objects:
@@ -99,8 +97,6 @@ def log_bulk_create(*args, **kwargs):
 
     _register_log_entry(log_entries)
 
-    post_bulk_log.send(sender=sender, objects=objects, created=True)
-
 
 @check_disable
 def log_bulk_update(*args, **kwargs):
@@ -110,15 +106,12 @@ def log_bulk_update(*args, **kwargs):
 
     original_instances = {obj.pk: obj for obj in sender._default_manager.filter(pk__in=[obj.pk for obj in objects])}
 
-    pre_bulk_log.send(sender=sender, objects=original_instances, new_objects=objects, fields=fields, created=False)
-
     log_entries = []
 
     for new_instance in objects:
         instance = original_instances.get(new_instance.pk)
 
         if instance is None:
-            logger.warning(f'Record not found or not access permission: Instance: {new_instance.__dict__}.')
             continue
 
         log_entry = _create_instance_log_entry(
@@ -135,16 +128,12 @@ def log_bulk_update(*args, **kwargs):
 
     _register_log_entry(log_entries)
 
-    post_bulk_log.send(sender=sender, objects=original_instances, new_objects=objects, fields=fields, created=False)
-
 
 @check_disable
 def log_query_update(*args, **kwargs):
     sender = kwargs['sender']
     queryset = kwargs['queryset']
     update_kwargs = kwargs['update_kwargs']
-
-    pre_bulk_log.send(sender=sender, queryset=queryset, update_kwargs=update_kwargs, created=False)
 
     log_entries = []
 
@@ -169,8 +158,6 @@ def log_query_update(*args, **kwargs):
             log_entries.append(log_entry)
 
     _register_log_entry(log_entries)
-
-    post_bulk_log.send(sender=sender, queryset=queryset, update_kwargs=update_kwargs, created=False)
 
 
 @check_disable
@@ -257,21 +244,10 @@ def log_access(sender, instance, **kwargs):
             _register_log_entry([log_entry])
 
 
-def _create_instance_log_entry(
-    action, instance, sender, diff_old, diff_new, fields_to_check=None, force_log=False
-) -> LogEntry:
-    pre_log_results = pre_log.send(
-        sender,
-        instance=instance,
-        action=action,
-    )
-
-    if any(item[1] is False for item in pre_log_results):
-        return
-
-    error = None
+def _create_log_entry(action, instance, diff_old, diff_new, fields_to_check=None, force_log=False):
     log_entry = None
     changes = None
+    error = None
 
     try:
         changes = model_instance_diff(diff_old, diff_new, fields_to_check=fields_to_check)
@@ -285,21 +261,71 @@ def _create_instance_log_entry(
             )
     except BaseException as e:
         error = e
-    finally:
-        if log_entry or error:
-            post_log.send(
-                sender,
-                instance=instance,
-                instance_old=diff_old,
-                action=action,
-                error=error,
-                pre_log_results=pre_log_results,
-                changes=changes,
-                log_entry=log_entry,
-                log_created=log_entry is not None,
-            )
-        if error:
-            raise error
+
+    return log_entry, changes, error
+
+
+def _create_instance_log_entry(
+    action, instance, sender, diff_old, diff_new, fields_to_check=None, force_log=False
+) -> LogEntry:
+    pre_log_results = pre_log.send(
+        sender,
+        instance=instance,
+        action=action,
+    )
+
+    if any(item[1] is False for item in pre_log_results):
+        return
+
+    log_entry, changes, error = _create_log_entry(action, instance, diff_old, diff_new, fields_to_check, force_log)
+
+    if log_entry or error:
+        post_log.send(
+            sender,
+            instance=instance,
+            instance_old=diff_old,
+            action=action,
+            error=error,
+            pre_log_results=pre_log_results,
+            changes=changes,
+            log_entry=log_entry,
+            log_created=log_entry is not None,
+        )
+    if error:
+        raise error
+
+    return log_entry
+
+
+def _create_many_instance_log_entry(
+    action, instances, sender, diff_old, diff_new, fields_to_check=None, force_log=False
+) -> LogEntry:
+    pre_log_results = pre_bulk_log.send(sender=sender, action=action, instances=instances)
+
+    if any(item[1] is False for item in pre_log_results):
+        return
+
+    results_post_log = []
+
+    for instance in instances:
+        log_entry, changes, error = _create_log_entry(action, instance, diff_old, diff_new, fields_to_check, force_log)
+
+        results_post_log.append(
+            {
+                "instance": instance,
+                "instance_old": None,
+                "log_entry": log_entry,
+                "log_created": log_entry is not None,
+                "changes": changes,
+                "error": error,
+            }
+        )
+
+    if log_entry or error:
+        post_bulk_log.send(sender=sender, action=action, results=results_post_log)
+
+    if error:
+        raise error
 
     return log_entry
 

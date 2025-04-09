@@ -22,10 +22,12 @@ from django.utils import formats
 from django.utils import timezone as django_timezone
 from django.utils.encoding import smart_str
 from django.utils.translation import gettext_lazy as _
-
+from auditlog.context import auditlog_value
 from auditlog.diff import mask_str
+from django.contrib.auth import get_user_model
 
 DEFAULT_OBJECT_REPR = "<error forming object repr>"
+auth_user_model = get_user_model()
 
 
 class LogEntryManager(models.Manager):
@@ -52,18 +54,14 @@ class LogEntryManager(models.Manager):
         pk = self._get_pk_value(instance)
 
         if changes is not None or force_log:
-            kwargs.setdefault(
-                "content_type", ContentType.objects.get_for_model(instance)
-            )
+            kwargs.setdefault("content_type", ContentType.objects.get_for_model(instance))
             kwargs.setdefault("object_pk", pk)
             try:
                 object_repr = smart_str(instance)
             except ObjectDoesNotExist:
                 object_repr = DEFAULT_OBJECT_REPR
             kwargs.setdefault("object_repr", object_repr)
-            kwargs.setdefault(
-                "serialized_data", self._get_serialized_data_or_none(instance)
-            )
+            kwargs.setdefault("serialized_data", self._get_serialized_data_or_none(instance))
 
             if isinstance(pk, int):
                 kwargs.setdefault("object_id", pk)
@@ -72,14 +70,27 @@ class LogEntryManager(models.Manager):
             if callable(get_additional_data):
                 kwargs.setdefault("additional_data", get_additional_data())
 
+            context = auditlog_value.get({})
+
+            actor = context.get("actor")
+            remote_addr = context.get("remote_addr")
+            remote_port = context.get("remote_port")
+
+            if isinstance(actor, auth_user_model):
+                kwargs.setdefault("actor", actor)
+                kwargs.setdefault("actor_email", getattr(actor, "email", None))
+
+            if remote_addr is not None:
+                kwargs.setdefault("remote_addr", remote_addr)
+            if remote_port is not None:
+                kwargs.setdefault("remote_port", remote_port)
+
             # set correlation id
             kwargs.setdefault("cid", get_cid())
             return LogEntry(**kwargs)
         return None
 
-    def create_instance_log_m2m_changes(
-        self, changed_queryset, instance, operation, field_name, **kwargs
-    ):
+    def create_instance_log_m2m_changes(self, changed_queryset, instance, operation, field_name, **kwargs):
         """Create a new "changed" log entry from m2m record.
 
         :param changed_queryset: The added or removed related objects.
@@ -98,9 +109,7 @@ class LogEntryManager(models.Manager):
 
         pk = self._get_pk_value(instance)
         if changed_queryset:
-            kwargs.setdefault(
-                "content_type", ContentType.objects.get_for_model(instance)
-            )
+            kwargs.setdefault("content_type", ContentType.objects.get_for_model(instance))
             kwargs.setdefault("object_pk", pk)
             try:
                 object_repr = smart_str(instance)
@@ -164,29 +173,15 @@ class LogEntryManager(models.Manager):
             return self.none()
 
         content_type = ContentType.objects.get_for_model(queryset.model)
-        primary_keys = list(
-            queryset.values_list(queryset.model._meta.pk.name, flat=True)
-        )
+        primary_keys = list(queryset.values_list(queryset.model._meta.pk.name, flat=True))
 
         if isinstance(primary_keys[0], int):
-            return (
-                self.filter(content_type=content_type)
-                .filter(Q(object_id__in=primary_keys))
-                .distinct()
-            )
+            return self.filter(content_type=content_type).filter(Q(object_id__in=primary_keys)).distinct()
         elif isinstance(queryset.model._meta.pk, models.UUIDField):
             primary_keys = [smart_str(pk) for pk in primary_keys]
-            return (
-                self.filter(content_type=content_type)
-                .filter(Q(object_pk__in=primary_keys))
-                .distinct()
-            )
+            return self.filter(content_type=content_type).filter(Q(object_pk__in=primary_keys)).distinct()
         else:
-            return (
-                self.filter(content_type=content_type)
-                .filter(Q(object_pk__in=primary_keys))
-                .distinct()
-            )
+            return self.filter(content_type=content_type).filter(Q(object_pk__in=primary_keys)).distinct()
 
     def get_for_model(self, model):
         """
@@ -236,14 +231,10 @@ class LogEntryManager(models.Manager):
         kwargs = opts.get("serialize_kwargs", {})
 
         if opts["serialize_auditlog_fields_only"]:
-            kwargs.setdefault(
-                "fields", self._get_applicable_model_fields(instance, model_fields)
-            )
+            kwargs.setdefault("fields", self._get_applicable_model_fields(instance, model_fields))
 
         instance_copy = self._get_copy_with_python_typed_fields(instance)
-        data = dict(
-            json.loads(serializers.serialize("json", (instance_copy,), **kwargs))[0]
-        )
+        data = dict(json.loads(serializers.serialize("json", (instance_copy,), **kwargs))[0])
 
         mask_fields = model_fields["mask_fields"]
         if mask_fields:
@@ -274,9 +265,7 @@ class LogEntryManager(models.Manager):
                     continue
         return instance_copy
 
-    def _get_applicable_model_fields(
-        self, instance, model_fields: dict[str, list[str]]
-    ) -> list[str]:
+    def _get_applicable_model_fields(self, instance, model_fields: dict[str, list[str]]) -> list[str]:
         include_fields = model_fields["include_fields"]
         exclude_fields = model_fields["exclude_fields"]
         all_field_names = [field.name for field in instance._meta.fields]
@@ -286,9 +275,7 @@ class LogEntryManager(models.Manager):
 
         return list(set(include_fields or all_field_names).difference(exclude_fields))
 
-    def _mask_serialized_fields(
-        self, data: dict[str, Any], mask_fields: list[str]
-    ) -> dict[str, Any]:
+    def _mask_serialized_fields(self, data: dict[str, Any], mask_fields: list[str]) -> dict[str, Any]:
         all_field_data = data.pop("fields")
 
         masked_field_data = {}
@@ -342,17 +329,11 @@ class LogEntry(models.Model):
         related_name="+",
         verbose_name=_("content type"),
     )
-    object_pk = models.CharField(
-        db_index=True, max_length=255, verbose_name=_("object pk")
-    )
-    object_id = models.BigIntegerField(
-        blank=True, db_index=True, null=True, verbose_name=_("object id")
-    )
+    object_pk = models.CharField(db_index=True, max_length=255, verbose_name=_("object pk"))
+    object_id = models.BigIntegerField(blank=True, db_index=True, null=True, verbose_name=_("object id"))
     object_repr = models.TextField(verbose_name=_("object representation"))
     serialized_data = models.JSONField(null=True)
-    action = models.PositiveSmallIntegerField(
-        choices=Action.choices, verbose_name=_("action"), db_index=True
-    )
+    action = models.PositiveSmallIntegerField(choices=Action.choices, verbose_name=_("action"), db_index=True)
     changes_text = models.TextField(blank=True, verbose_name=_("change message"))
     changes = models.JSONField(null=True, verbose_name=_("change message"))
     actor = models.ForeignKey(
@@ -370,20 +351,14 @@ class LogEntry(models.Model):
         null=True,
         verbose_name=_("Correlation ID"),
     )
-    remote_addr = models.GenericIPAddressField(
-        blank=True, null=True, verbose_name=_("remote address")
-    )
-    remote_port = models.PositiveIntegerField(
-        blank=True, null=True, verbose_name=_("remote port")
-    )
+    remote_addr = models.GenericIPAddressField(blank=True, null=True, verbose_name=_("remote address"))
+    remote_port = models.PositiveIntegerField(blank=True, null=True, verbose_name=_("remote port"))
     timestamp = models.DateTimeField(
         default=django_timezone.now,
         db_index=True,
         verbose_name=_("timestamp"),
     )
-    additional_data = models.JSONField(
-        blank=True, null=True, verbose_name=_("additional data")
-    )
+    additional_data = models.JSONField(blank=True, null=True, verbose_name=_("additional data"))
     actor_email = models.CharField(blank=True, null=True, max_length=254)
 
     objects = LogEntryManager()
@@ -474,11 +449,7 @@ class LogEntry(models.Model):
                     try:
                         value = ast.literal_eval(value)
                         if type(value) is [].__class__:
-                            values_display.append(
-                                ", ".join(
-                                    [choices_dict.get(val, "None") for val in value]
-                                )
-                            )
+                            values_display.append(", ".join([choices_dict.get(val, "None") for val in value]))
                         else:
                             values_display.append(choices_dict.get(value, "None"))
                     except Exception:
