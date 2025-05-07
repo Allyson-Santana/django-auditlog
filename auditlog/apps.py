@@ -17,7 +17,7 @@ class AuditlogConfig(AppConfig):
     def _skip_model_without_audit_log_recorded(self, model: models.Model, auditlog: "AuditlogModelRegistry") -> bool:
         return model not in auditlog.get_models()
 
-    def _skip_bulk_signals(self, kwargs) -> bool:
+    def _skip_bulk_signals_just_this_once(self, kwargs) -> bool:
         skip_signal = bool(kwargs.pop("skip_signal", False))
         return skip_signal or not self.signal_global_enable
 
@@ -46,7 +46,7 @@ class AuditlogConfig(AppConfig):
             mode_name = queryset.model._meta.label
             model = apps.get_model(mode_name)
 
-            if self._skip_bulk_signals(kwargs) or self._skip_model_without_audit_log_recorded(model, auditlog):
+            if self._skip_bulk_signals_just_this_once(kwargs) or self._skip_model_without_audit_log_recorded(model, auditlog):
                 return base_bulk_create(queryset, objs, **kwargs)
 
             created_objects = base_bulk_create(queryset, objs, **kwargs)
@@ -64,7 +64,7 @@ class AuditlogConfig(AppConfig):
             mode_name = queryset.model._meta.label
             model = apps.get_model(mode_name)
 
-            if self._skip_bulk_signals(kwargs) or self._skip_model_without_audit_log_recorded(model, auditlog):
+            if self._skip_bulk_signals_just_this_once(kwargs) or self._skip_model_without_audit_log_recorded(model, auditlog):
                 return base_bulk_update(queryset, objs, fields, **kwargs)
 
             with transaction.atomic():
@@ -81,7 +81,7 @@ class AuditlogConfig(AppConfig):
             mode_name = queryset.model._meta.label
             model = apps.get_model(mode_name)
 
-            if self._skip_bulk_signals(kwargs) or self._skip_model_without_audit_log_recorded(model, auditlog):
+            if self._skip_bulk_signals_just_this_once(kwargs) or self._skip_model_without_audit_log_recorded(model, auditlog):
                 return base_update(queryset, **kwargs)
 
             if queryset._hints.get("is_bulk_update", False):
